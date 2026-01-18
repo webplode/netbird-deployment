@@ -159,6 +159,60 @@ ping 10.2.0.1
 
 ---
 
+## 8.1) CrowdSec Firewall Bouncer (Host Install)
+
+Install the firewall bouncer on **EC2-A** (management plane) so it can attach to
+`INPUT` and `DOCKER-USER` and protect exposed container ports.
+
+Docs: https://docs.crowdsec.net/u/bouncers/firewall
+
+1) Generate the bouncer API key:
+```bash
+docker compose exec crowdsec cscli bouncers add firewall-bouncer
+```
+
+2) Install the bouncer on Ubuntu:
+```bash
+sudo apt install crowdsec-firewall-bouncer-iptables
+```
+
+3) Configure the bouncer:
+- `api_url`: `http://127.0.0.1:8080`
+- `api_key`: use the key you generated
+- `iptables_chains`: include `INPUT` and `DOCKER-USER`
+
+Restart the bouncer service after updating its config.
+
+---
+
+## 9) Hardening Checklist (NetBird Docs)
+
+1) **Remove default "allow all" policy** and define group-based access.  
+Docs: https://docs.netbird.io/manage/access-control
+
+2) **Use posture checks** for production routes.  
+Docs: https://docs.netbird.io/how-to/manage-posture-checks
+
+3) **Limit setup keys** (expiry + usage count).  
+Docs: https://docs.netbird.io/manage/peers/register-machines-using-setup-keys
+
+4) **Enable audit/activity logging** and review regularly.  
+Docs: https://docs.netbird.io/manage/activity
+
+5) **Restrict NetBird SSH** to approved groups/hosts.  
+Docs: https://docs.netbird.io/manage/peers/ssh
+
+6) **Keep reverse proxy TLS-only** and open only required ports.  
+Docs: https://docs.netbird.io/selfhosted/selfhosted-guide
+
+7) **Use IdP with MFA** and keep secrets out of git.  
+Docs: https://docs.netbird.io/selfhosted/identity-providers
+
+8) **Docker host hardening**: patch OS, restrict SSH, and use `no-new-privileges`.  
+Docs: https://docs.netbird.io/get-started/install/docker
+
+---
+
 ## Notes
 
 - EC2-A must expose management, signal, and relay endpoints publicly.

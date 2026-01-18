@@ -34,7 +34,28 @@ The stack consists of the following components:
 The stack bridges the gap between application logs and network defense:
 1. **Log Acquisition**: Centralized acquisition via `acquis.yaml` mapping container logs to specific labels.
 2. **Parsing**: Custom Grok patterns decode Netbird's specific log formats (Go-based logging) and Coturn's STUN/TURN allocation logs.
-3. **Remediation**: A dedicated Firewall Bouncer container applies blocklists directly to the host's `INPUT` chain, protecting all Docker containers effectively.
+3. **Remediation**: A host-installed Firewall Bouncer applies blocklists to `INPUT` and `DOCKER-USER`, protecting Docker-published ports.
+
+## Hardening Checklist (NetBird Docs)
+
+Apply these in the NetBird dashboard and at the host level:
+
+1. **Remove default "allow all" policy** and create explicit access policies by group and destination.  
+   Docs: https://docs.netbird.io/manage/access-control
+2. **Use posture checks** for sensitive routes (client version/OS compliance).  
+   Docs: https://docs.netbird.io/how-to/manage-posture-checks
+3. **Limit setup keys** with expiration and usage count. Prefer one-time keys.  
+   Docs: https://docs.netbird.io/manage/peers/register-machines-using-setup-keys
+4. **Enable audit/activity logging** and review regularly.  
+   Docs: https://docs.netbird.io/manage/activity
+5. **Restrict NetBird SSH** by identity and host/user mapping.  
+   Docs: https://docs.netbird.io/manage/peers/ssh
+6. **Keep reverse proxy TLS-only** and expose minimal ports.  
+   Docs: https://docs.netbird.io/selfhosted/selfhosted-guide
+7. **Use external OIDC with MFA** (JumpCloud) and keep secrets off git.  
+   Docs: https://docs.netbird.io/selfhosted/identity-providers
+8. **Docker host hardening**: patch OS, restrict SSH, and run containers with `no-new-privileges`.  
+   Docs: https://docs.netbird.io/get-started/install/docker
 
 ### Compliance Notes
 - **Log Rotation**: Strict limits (e.g., 50MB) per container to ensure audit trails without disk exhaustion.
@@ -70,16 +91,22 @@ nano .env
 Start the stack in detached mode.
 docker compose up -d
 
-### 5. Post-Deployment: CrowdSec Bouncer
-Once the stack is running, generate an API key for the Firewall Bouncer and add it to your `.env` file.
-Generate Key
+### 5. Post-Deployment: CrowdSec Firewall Bouncer (Host Install)
+Install the firewall bouncer on the host using the official instructions. This protects
+Docker-published ports by attaching to the `INPUT` and `DOCKER-USER` chains.
+
+Docs: https://docs.crowdsec.net/u/bouncers/firewall
+
+Generate the API key:
 docker compose exec crowdsec cscli bouncers add firewall-bouncer
 
-Add to .env
-nano .env # Set CROWDSEC_BOUNCER_KEY=...
+Then configure the bouncer on the host:
+- `api_url`: `http://127.0.0.1:8080`
+- `api_key`: use the key you generated
+- `iptables_chains`: include `INPUT` and `DOCKER-USER`
 
-Restart Bouncer
-docker compose up -d --force-recreate cs-firewall-bouncer
+You can start from the template in this repo:
+`config/crowdsec/crowdsec-firewall-bouncer.yaml`
 
 ## Admin Access to Management API
 

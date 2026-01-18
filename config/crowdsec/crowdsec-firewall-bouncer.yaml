@@ -1,0 +1,25 @@
+#
+# CrowdSec Firewall Bouncer (Host Install)
+# Copy this file to: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+#
+# Docs: https://docs.crowdsec.net/u/bouncers/firewall
+#
+# Required:
+# - Generate API key: `cscli bouncers add firewall-bouncer`
+# - Set api_key below
+#
+
+mode: iptables
+api_url: http://127.0.0.1:8080
+api_key: CHANGE_ME
+
+update_frequency: 10s
+
+iptables_chains:
+  - INPUT
+  - DOCKER-USER
+
+deny_action: DROP
+
+log_mode: stdout
+log_level: info

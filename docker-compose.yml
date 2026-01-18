@@ -8,6 +8,8 @@ services:
     container_name: netbird-caddy
     restart: unless-stopped
     networks: [netbird]
+    security_opt:
+      - no-new-privileges:true
     ports:
       - '80:80'
       - '443:443'
@@ -29,6 +31,8 @@ services:
     container_name: netbird-oauth2-proxy
     restart: unless-stopped
     networks: [netbird]
+    security_opt:
+      - no-new-privileges:true
     environment:
       OAUTH2_PROXY_PROVIDER: oidc
       OAUTH2_PROXY_OIDC_ISSUER_URL: https://oauth.id.jumpcloud.com/
@@ -70,6 +74,8 @@ services:
     restart: unless-stopped
     networks: [netbird]
     env_file: .env # Maps to dashboard.env in your setup
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options: {max-size: "50m", max-file: "2"}
@@ -79,6 +85,8 @@ services:
     container_name: netbird-signal
     restart: unless-stopped
     networks: [netbird]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options: {max-size: "100m", max-file: "2"}
@@ -89,6 +97,8 @@ services:
     restart: unless-stopped
     networks: [netbird]
     env_file: .env # Maps to relay.env
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options: {max-size: "100m", max-file: "2"}
@@ -112,6 +122,8 @@ services:
       "--dns-domain=${DOMAIN}",
       "--idp-sign-key-refresh-enabled"
     ]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options: {max-size: "100m", max-file: "2"}
@@ -124,6 +136,8 @@ services:
     container_name: netbird-coturn
     restart: unless-stopped
     networks: [netbird]
+    security_opt:
+      - no-new-privileges:true
     # SECURITY FIX: Replaces 'network_mode: host' with specific bindings
     ports:
       - '${PUBLIC_IP}:3478:3478/udp'
@@ -147,6 +161,8 @@ services:
     container_name: netbird-crowdsec
     restart: unless-stopped
     networks: [netbird]
+    security_opt:
+      - no-new-privileges:true
     environment:
       - COLLECTIONS=crowdsecurity/linux crowdsecurity/caddy
       - ENROLL_TAGS=netbird,infrastructure
@@ -168,25 +184,6 @@ services:
       driver: "json-file"
       options: {max-size: "50m", max-file: "2"}
 
-  cs-firewall-bouncer:
-    image: crowdsecurity/cs-firewall-bouncer:latest
-    container_name: netbird-bouncer
-    restart: unless-stopped
-    network_mode: host # Required for iptables access
-    environment:
-      - CROWDSEC_LAPI_URL=http://127.0.0.1:8080
-      - CROWDSEC_LAPI_KEY=${CROWDSEC_BOUNCER_KEY}
-      - IPTABLES_CHAINS=INPUT,DOCKER-USER
-    depends_on:
-      - crowdsec
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    logging:
-      driver: "json-file"
-      options: {max-size: "50m", max-file: "2"}
 
 volumes:
   netbird_management:
