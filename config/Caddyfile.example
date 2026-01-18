@@ -1,0 +1,46 @@
+# Caddyfile Reference Configuration
+
+{$DOMAIN} {
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    handle /api/* {
+        reverse_proxy netbird-management:80
+    }
+
+    handle /management.ManagementService/* {
+        reverse_proxy h2c://netbird-management:80
+    }
+
+    handle /signalexchange.SignalExchange/* {
+        reverse_proxy h2c://netbird-signal:80
+    }
+
+    handle /relay* {
+        reverse_proxy netbird-relay:33080
+    }
+
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+
+    handle {
+        reverse_proxy oauth2-proxy:4180
+    }
+}
+
+# Optional: admin-only Management API via OAuth2-Proxy
+admin.{$DOMAIN} {
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+
+    forward_auth oauth2-proxy:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-User X-Auth-Request-Email
+    }
+
+    reverse_proxy netbird-management:80
+}

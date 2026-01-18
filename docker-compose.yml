@@ -1,0 +1,200 @@
+services:
+
+  # ============================================
+  # REVERSE PROXY
+  # ============================================
+  caddy:
+    image: caddy:latest
+    container_name: netbird-caddy
+    restart: unless-stopped
+    networks: [netbird]
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3 Support
+    volumes:
+      - netbird_caddy_data:/data
+      - ./config/Caddyfile:/etc/caddy/Caddyfile
+      # Log volume for CrowdSec
+      - ./logs/caddy:/var/log/caddy
+    logging:
+      driver: "json-file"
+      options: {max-size: "100m", max-file: "2"}
+
+  # ============================================
+  # OAUTH2-PROXY (Dashboard Protection)
+  # ============================================
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    container_name: netbird-oauth2-proxy
+    restart: unless-stopped
+    networks: [netbird]
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://oauth.id.jumpcloud.com/
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_CLIENT_SECRET}
+
+      OAUTH2_PROXY_REDIRECT_URL: https://${DOMAIN}/oauth2/callback
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_NAME: _netbird_auth
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: /etc/oauth2-proxy/allowed_emails.txt
+
+      OAUTH2_PROXY_UPSTREAMS: http://netbird-dashboard:80
+
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+      OAUTH2_PROXY_SILENCE_PING_LOGGING: "true"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_SCOPE: openid email profile
+    volumes:
+      - ./config/allowed_emails.txt:/etc/oauth2-proxy/allowed_emails.txt:ro
+    logging:
+      driver: "json-file"
+      options: {max-size: "50m", max-file: "2"}
+
+  # ============================================
+  # NETBIRD CORE SERVICES
+  # ============================================
+  dashboard:
+    image: netbirdio/dashboard:latest
+    container_name: netbird-dashboard
+    restart: unless-stopped
+    networks: [netbird]
+    env_file: .env # Maps to dashboard.env in your setup
+    logging:
+      driver: "json-file"
+      options: {max-size: "50m", max-file: "2"}
+
+  signal:
+    image: netbirdio/signal:latest
+    container_name: netbird-signal
+    restart: unless-stopped
+    networks: [netbird]
+    logging:
+      driver: "json-file"
+      options: {max-size: "100m", max-file: "2"}
+
+  relay:
+    image: netbirdio/relay:latest
+    container_name: netbird-relay
+    restart: unless-stopped
+    networks: [netbird]
+    env_file: .env # Maps to relay.env
+    logging:
+      driver: "json-file"
+      options: {max-size: "100m", max-file: "2"}
+
+  management:
+    image: netbirdio/management:latest
+    container_name: netbird-management
+    restart: unless-stopped
+    networks: [netbird]
+    volumes:
+      - netbird_management:/var/lib/netbird
+      - ./config/management.json:/etc/netbird/management.json
+      # Log volume for CrowdSec parsing
+      - ./logs/management:/var/log/netbird
+    command: [
+      "--port", "80",
+      "--log-file", "console",
+      "--log-level", "info",
+      "--disable-anonymous-metrics=false",
+      "--single-account-mode-domain=${DOMAIN}",
+      "--dns-domain=${DOMAIN}",
+      "--idp-sign-key-refresh-enabled"
+    ]
+    logging:
+      driver: "json-file"
+      options: {max-size: "100m", max-file: "2"}
+
+  # ============================================
+  # COTURN (STUN/TURN) - Hardened Configuration
+  # ============================================
+  coturn:
+    image: coturn/coturn:latest
+    container_name: netbird-coturn
+    restart: unless-stopped
+    networks: [netbird]
+    # SECURITY FIX: Replaces 'network_mode: host' with specific bindings
+    ports:
+      - '${PUBLIC_IP}:3478:3478/udp'
+      - '${PUBLIC_IP}:3478:3478/tcp'
+      - '${PUBLIC_IP}:5349:5349/tcp'
+      - '${PUBLIC_IP}:49152-65535:49152-65535/udp'
+    volumes:
+      - ./config/turnserver.conf:/etc/turnserver.conf:ro
+      # Log volume for CrowdSec
+      - ./logs/coturn:/var/log/coturn
+    command: ["-c", "/etc/turnserver.conf"]
+    logging:
+      driver: "json-file"
+      options: {max-size: "100m", max-file: "2"}
+
+  # ============================================
+  # SECURITY & MONITORING (CrowdSec)
+  # ============================================
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: netbird-crowdsec
+    restart: unless-stopped
+    networks: [netbird]
+    environment:
+      - COLLECTIONS=crowdsecurity/linux crowdsecurity/caddy
+      - ENROLL_TAGS=netbird,infrastructure
+    volumes:
+      - ./data/crowdsec:/var/lib/crowdsec/data
+      - ./config/crowdsec:/etc/crowdsec
+      # Custom Configs
+      - ./config/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - ./config/crowdsec/parsers:/etc/crowdsec/parsers/s01-parse:ro
+      - ./config/crowdsec/scenarios:/etc/crowdsec/scenarios:ro
+      # Logs (Read-Only)
+      - ./logs/caddy:/var/log/caddy:ro
+      - ./logs/management:/var/log/netbird:ro
+      - ./logs/coturn:/var/log/coturn:ro
+      - /var/log/auth.log:/var/log/auth.log:ro
+    ports:
+      - "127.0.0.1:8080:8080" # LAPI for Bouncer
+    logging:
+      driver: "json-file"
+      options: {max-size: "50m", max-file: "2"}
+
+  cs-firewall-bouncer:
+    image: crowdsecurity/cs-firewall-bouncer:latest
+    container_name: netbird-bouncer
+    restart: unless-stopped
+    network_mode: host # Required for iptables access
+    environment:
+      - CROWDSEC_LAPI_URL=http://127.0.0.1:8080
+      - CROWDSEC_LAPI_KEY=${CROWDSEC_BOUNCER_KEY}
+      - IPTABLES_CHAINS=INPUT,DOCKER-USER
+    depends_on:
+      - crowdsec
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    logging:
+      driver: "json-file"
+      options: {max-size: "50m", max-file: "2"}
+
+volumes:
+  netbird_management:
+  netbird_caddy_data:
+
+networks:
+  netbird:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
