@@ -1,0 +1,20 @@
+# Local runtime secrets and generated state. Keep these files on the host only.
+.env
+.env.*
+!.env.example
+management.json
+relay.env
+turnserver.conf
+netbird-ec2-install-bundle/management.json
+netbird-ec2-install-bundle/relay.env
+netbird-ec2-install-bundle/turnserver.conf
+caddy_data/
+
+# Historical captures, backups, editor state, and generated artifacts.
+*.bak
+*.har
+*.swp
+.omx/
+**/__pycache__/
+*.py[cod]
+psql-test/
