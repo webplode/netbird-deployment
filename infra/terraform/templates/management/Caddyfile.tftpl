@@ -1,0 +1,76 @@
+{
+	acme_ca ${acme_ca}
+	email ${acme_email}
+
+	servers :80 {
+		protocols h1
+	}
+	servers :443 {
+		protocols h1 h2 h3
+	}
+	log {
+		level INFO
+		format json
+		output stdout
+	}
+}
+
+(security_headers) {
+	header * {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		X-XSS-Protection "0"
+		-Server
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+:80 {
+	redir https://${domain}{uri} 308
+}
+
+${domain}:443 {
+	import security_headers
+
+	route {
+		@netbird_health {
+			path /healthz
+			header Authorization "Bearer {$NETBIRD_HEALTH_TOKEN}"
+		}
+		handle @netbird_health {
+			rewrite * /metrics
+			reverse_proxy management:9090
+		}
+		handle /healthz {
+			respond "Unauthorized" 401
+		}
+		handle /oauth2-proxy/* {
+			reverse_proxy oauth2-proxy:4180
+		}
+		handle /relay* {
+			reverse_proxy relay:80
+		}
+		handle /ws-proxy/signal* {
+			reverse_proxy signal:80
+		}
+		handle /signalexchange.SignalExchange/* {
+			reverse_proxy h2c://signal:10000
+		}
+		handle /api/* {
+			reverse_proxy management:80
+		}
+		handle /ws-proxy/management* {
+			reverse_proxy management:80
+		}
+		handle /management.ManagementService/* {
+			reverse_proxy h2c://management:80
+		}
+		handle /oauth2/* {
+			reverse_proxy management:80
+		}
+		handle /* {
+			reverse_proxy oauth2-proxy:4180
+		}
+	}
+}

@@ -1,0 +1,15 @@
+# Runtime configuration and credentials. Commit only the adjacent examples.
+.env
+.env.*
+!.env.example
+dashboard.env
+management.json
+relay.env
+turnserver.conf
+
+# Caddy account, certificates, keys, and generated state.
+caddy_data/
+*.key
+*.pem
+*.p12
+*.pfx

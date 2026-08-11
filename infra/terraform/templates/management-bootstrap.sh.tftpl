@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+exec 9>/var/lock/sleek-netbird-management-bootstrap.lock
+if ! flock -n 9; then
+  echo "Another management bootstrap is already running."
+  exit 0
+fi
+
+if [[ "$(uname -m)" != "aarch64" ]]; then
+  echo "FATAL: expected aarch64 for t4g.small" >&2
+  exit 1
+fi
+
+secret_file=""
+compose_tmp=""
+cookie_b64_file=""
+trap 'rm -f "$secret_file" "$compose_tmp" "$cookie_b64_file"' EXIT
+
+dnf install -y docker jq xfsprogs
+systemctl enable --now docker
+
+install -d -m 0755 /usr/local/lib/docker/cli-plugins
+compose_url="https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-aarch64"
+compose_tmp="$(mktemp /run/docker-compose.XXXXXX)"
+curl --fail --silent --show-error --location "$compose_url" --output "$compose_tmp"
+printf '%s  %s\n' '${compose_sha256}' "$compose_tmp" | sha256sum --check --status
+install -o root -g root -m 0755 "$compose_tmp" /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+
+data_volume_id="${data_volume_id}"
+volume_id_compact="$(printf '%s' "$data_volume_id" | tr -d '-')"
+volume_link="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$volume_id_compact"
+
+for _ in $(seq 1 120); do
+  [[ -e "$volume_link" ]] && break
+  sleep 5
+done
+
+if [[ ! -e "$volume_link" ]]; then
+  echo "FATAL: data volume $data_volume_id did not appear at $volume_link" >&2
+  exit 1
+fi
+
+volume_device="$(readlink -f "$volume_link")"
+filesystem_type="$(blkid -s TYPE -o value "$volume_device" 2>/dev/null || true)"
+if [[ -z "$filesystem_type" ]]; then
+  mkfs.xfs -f "$volume_device"
+  filesystem_type="xfs"
+fi
+
+if [[ "$filesystem_type" != "xfs" && "$filesystem_type" != "ext4" ]]; then
+  echo "FATAL: unsupported data-volume filesystem $filesystem_type" >&2
+  exit 1
+fi
+
+install -d -m 0750 /srv/netbird
+volume_uuid="$(blkid -s UUID -o value "$volume_device")"
+if ! grep -qF "UUID=$volume_uuid /srv/netbird " /etc/fstab; then
+  printf 'UUID=%s /srv/netbird %s defaults,nofail 0 2\n' "$volume_uuid" "$filesystem_type" >> /etc/fstab
+fi
+mountpoint -q /srv/netbird || mount /srv/netbird
+
+install -d -o root -g root -m 0700 \
+  /srv/netbird/management \
+  /srv/netbird/caddy-data \
+  /srv/netbird/caddy-config
+install -d -o root -g root -m 0750 /opt/sleek-netbird /opt/sleek-netbird/runtime
+
+secret_file="$(mktemp /run/sleek-netbird-management-secret.XXXXXX)"
+aws secretsmanager get-secret-value \
+  --secret-id '${runtime_secret_arn}' \
+  --query SecretString \
+  --output text > "$secret_file"
+
+jq -e '
+  (type == "object") and
+  (.oauth2_client_id | type == "string") and
+  (.oauth2_client_id | test("^[A-Za-z0-9._:-]{3,256}$")) and
+  (.oauth2_client_secret | type == "string") and
+  (.oauth2_client_secret | length >= 16 and length <= 4096) and
+  (.oauth2_client_secret | test("[\\r\\n]") | not) and
+  (.oauth2_cookie_secret_base64 | type == "string") and
+  (.oauth2_cookie_secret_base64 | test("^[A-Za-z0-9_+/=-]+$")) and
+  (.netbird_relay_secret | type == "string") and
+  (.netbird_relay_secret | test("^[A-Za-z0-9._~+/=-]{16,4096}$")) and
+  (.netbird_datastore_encryption_key | type == "string") and
+  (.netbird_datastore_encryption_key | test("^[A-Za-z0-9._~+/=-]{16,4096}$")) and
+  (.turn_password | type == "string") and
+  (.turn_password | test("^[A-Za-z0-9._~+-]{16,256}$")) and
+  (.health_token | type == "string") and
+  (.health_token | test("^[A-Fa-f0-9]{64}$"))
+' "$secret_file" >/dev/null
+
+jq -j -r '.oauth2_client_secret' "$secret_file" > /opt/sleek-netbird/runtime/oauth-client-secret
+chmod 0600 /opt/sleek-netbird/runtime/oauth-client-secret
+
+cookie_b64_file="$(mktemp /run/sleek-netbird-cookie.XXXXXX)"
+jq -j -r '.oauth2_cookie_secret_base64' "$secret_file" | tr '_-' '/+' > "$cookie_b64_file"
+cookie_remainder=$(( $(wc -c < "$cookie_b64_file") % 4 ))
+case "$cookie_remainder" in
+  0) ;;
+  2) printf '==' >> "$cookie_b64_file" ;;
+  3) printf '=' >> "$cookie_b64_file" ;;
+  *) echo "FATAL: invalid OAuth2 cookie-secret base64 length" >&2; exit 1 ;;
+esac
+base64 --decode "$cookie_b64_file" > /opt/sleek-netbird/runtime/oauth-cookie-secret
+cookie_bytes="$(wc -c < /opt/sleek-netbird/runtime/oauth-cookie-secret | tr -d ' ')"
+case "$cookie_bytes" in
+  16|24|32) ;;
+  *) echo "FATAL: OAuth2 cookie secret must decode to 16, 24, or 32 bytes" >&2; exit 1 ;;
+esac
+chmod 0600 /opt/sleek-netbird/runtime/oauth-cookie-secret
+
+health_token="$(jq -j -r '.health_token' "$secret_file")"
+oauth2_client_id="$(jq -j -r '.oauth2_client_id' "$secret_file")"
+printf 'NETBIRD_HEALTH_TOKEN=%s\nOAUTH2_PROXY_CLIENT_ID=%s\n' \
+  "$health_token" "$oauth2_client_id" > /opt/sleek-netbird/.env
+chmod 0600 /opt/sleek-netbird/.env
+
+relay_secret="$(jq -j -r '.netbird_relay_secret' "$secret_file")"
+datastore_key="$(jq -j -r '.netbird_datastore_encryption_key' "$secret_file")"
+jq -n \
+  --arg domain '${domain}' \
+  --arg relay_secret "$relay_secret" \
+  --arg datastore_key "$datastore_key" \
+  '{
+    Stuns: [{Proto: "udp", URI: ("stun:" + $domain + ":3478")}],
+    Relay: {
+      Addresses: [("rels://" + $domain + ":443")],
+      CredentialsTTL: "24h",
+      Secret: $relay_secret
+    },
+    Signal: {Proto: "https", URI: ($domain + ":443")},
+    Datadir: "/var/lib/netbird",
+    DataStoreEncryptionKey: $datastore_key,
+    EmbeddedIdP: {
+      Enabled: true,
+      Issuer: ("https://" + $domain + "/oauth2"),
+      DashboardRedirectURIs: [
+        ("https://" + $domain + "/nb-auth"),
+        ("https://" + $domain + "/nb-silent-auth")
+      ]
+    }
+  }' > /opt/sleek-netbird/runtime/management.json
+chmod 0600 /opt/sleek-netbird/runtime/management.json
+
+printf 'NB_LOG_LEVEL=info\nNB_LISTEN_ADDRESS=:80\nNB_EXPOSED_ADDRESS=rels://%s:443\nNB_AUTH_SECRET=%s\n' \
+  '${domain}' "$relay_secret" > /opt/sleek-netbird/runtime/relay.env
+chmod 0600 /opt/sleek-netbird/runtime/relay.env
+
+cat > /opt/sleek-netbird/runtime/dashboard.env <<'DASHBOARD_ENV'
+NETBIRD_MGMT_API_ENDPOINT=https://${domain}
+NETBIRD_MGMT_GRPC_API_ENDPOINT=https://${domain}
+AUTH_AUDIENCE=netbird-client
+AUTH_CLIENT_ID=netbird-client
+AUTH_AUTHORITY=https://${domain}/oauth2
+USE_AUTH0=false
+AUTH_SUPPORTED_SCOPES=openid profile email offline_access
+AUTH_REDIRECT_URI=/nb-auth
+AUTH_SILENT_REDIRECT_URI=/nb-silent-auth
+NETBIRD_TOKEN_SOURCE=accessToken
+DASHBOARD_ENV
+chmod 0640 /opt/sleek-netbird/runtime/dashboard.env
+
+turn_password="$(jq -j -r '.turn_password' "$secret_file")"
+cat > /opt/sleek-netbird/runtime/turnserver.conf <<'TURN_PREFIX'
+listening-port=3478
+external-ip=${management_public_ipv4}
+min-port=49152
+max-port=65535
+fingerprint
+lt-cred-mech
+TURN_PREFIX
+printf 'user=self:%s\n' "$turn_password" >> /opt/sleek-netbird/runtime/turnserver.conf
+cat >> /opt/sleek-netbird/runtime/turnserver.conf <<'TURN_SUFFIX'
+realm=${turn_realm}
+log-file=stdout
+no-tls
+no-dtls
+no-software-attribute
+pidfile=/var/tmp/turnserver.pid
+no-cli
+TURN_SUFFIX
+chmod 0600 /opt/sleek-netbird/runtime/turnserver.conf
+
+printf '%s' '${caddyfile_b64}' | base64 --decode > /opt/sleek-netbird/Caddyfile
+printf '%s' '${compose_b64}' | base64 --decode > /opt/sleek-netbird/docker-compose.yml
+chmod 0640 /opt/sleek-netbird/Caddyfile /opt/sleek-netbird/docker-compose.yml
+
+rm -f "$secret_file" "$cookie_b64_file"
+secret_file=""
+cookie_b64_file=""
+unset health_token oauth2_client_id relay_secret datastore_key turn_password
+
+cd /opt/sleek-netbird
+docker compose --env-file .env config --quiet
+docker compose --env-file .env pull
+docker compose --env-file .env run --rm --no-deps caddy \
+  caddy validate --config /etc/caddy/Caddyfile
+docker compose --env-file .env up -d --remove-orphans
+
+expected_count="$(docker compose --env-file .env config --services | wc -l | tr -d ' ')"
+for _ in $(seq 1 60); do
+  running_count="$(docker compose --env-file .env ps --services --filter status=running | wc -l | tr -d ' ')"
+  [[ "$running_count" == "$expected_count" ]] && break
+  sleep 5
+done
+
+sleep 15
+running_count="$(docker compose --env-file .env ps --services --filter status=running | wc -l | tr -d ' ')"
+if [[ "$running_count" != "$expected_count" ]]; then
+  docker compose --env-file .env ps
+  echo "FATAL: only $running_count of $expected_count management services are running" >&2
+  exit 1
+fi
+
+if docker compose --env-file .env ps --services --filter status=exited | grep -q .; then
+  docker compose --env-file .env ps
+  echo "FATAL: one or more management services exited" >&2
+  exit 1
+fi
+
+docker compose --env-file .env exec -T caddy \
+  caddy validate --config /etc/caddy/Caddyfile
+echo "Management bootstrap converged with $running_count services running."

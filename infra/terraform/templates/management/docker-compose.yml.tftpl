@@ -1,0 +1,151 @@
+name: sleek-netbird
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: "3"
+
+x-security: &default-security
+  - no-new-privileges:true
+
+services:
+  caddy:
+    image: ${caddy_image}
+    container_name: netbird-caddy
+    restart: unless-stopped
+    init: true
+    networks: [netbird]
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+    volumes:
+      - /srv/netbird/caddy-data:/data
+      - /srv/netbird/caddy-config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      NETBIRD_HEALTH_TOKEN: "$${NETBIRD_HEALTH_TOKEN:?Populate the management runtime secret}"
+    security_opt: *default-security
+    logging: *default-logging
+
+  dashboard:
+    image: ${dashboard_image}
+    container_name: netbird-dashboard
+    restart: unless-stopped
+    init: true
+    networks: [netbird]
+    env_file:
+      - ./runtime/dashboard.env
+    security_opt: *default-security
+    logging: *default-logging
+
+  signal:
+    image: ${signal_image}
+    container_name: netbird-signal
+    restart: unless-stopped
+    init: true
+    networks: [netbird]
+    security_opt: *default-security
+    logging: *default-logging
+
+  relay:
+    image: ${relay_image}
+    container_name: netbird-relay
+    restart: unless-stopped
+    init: true
+    networks: [netbird]
+    env_file:
+      - ./runtime/relay.env
+    security_opt: *default-security
+    logging: *default-logging
+
+  management:
+    image: ${management_image}
+    container_name: netbird-management
+    restart: unless-stopped
+    init: true
+    networks: [netbird]
+    volumes:
+      - /srv/netbird/management:/var/lib/netbird
+      - ./runtime/management.json:/etc/netbird/management.json:ro
+    command:
+      - --port
+      - "80"
+      - --log-file
+      - console
+      - --log-level
+      - info
+      - --disable-anonymous-metrics=true
+      - --single-account-mode-domain=netbird.selfhosted
+      - --dns-domain=netbird.selfhosted
+      - --idp-sign-key-refresh-enabled
+    security_opt: *default-security
+    logging: *default-logging
+
+  oauth2-proxy:
+    image: ${oauth_proxy_image}
+    container_name: netbird-oauth2-proxy
+    restart: unless-stopped
+    init: true
+    networks: [netbird]
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${oidc_issuer_url}
+      OAUTH2_PROXY_CLIENT_ID: "$${OAUTH2_PROXY_CLIENT_ID:?Populate the management runtime secret}"
+      OAUTH2_PROXY_CLIENT_SECRET_FILE: /run/secrets/oauth_client_secret
+      OAUTH2_PROXY_COOKIE_SECRET_FILE: /run/secrets/oauth_cookie_secret
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_NAME: __Secure-netbird_oauth
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+      OAUTH2_PROXY_COOKIE_DOMAINS: ${domain}
+      OAUTH2_PROXY_WHITELIST_DOMAINS: ${domain}
+      OAUTH2_PROXY_REDIRECT_URL: https://${domain}/oauth2-proxy/callback
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_ALLOWED_GROUPS: ${allowed_group}
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: groups
+      OAUTH2_PROXY_UPSTREAMS: http://dashboard:80
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_PROXY_PREFIX: /oauth2-proxy
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_TRUSTED_PROXY_IPS: 172.30.0.0/24
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+      OAUTH2_PROXY_SET_AUTHORIZATION_HEADER: "true"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+    secrets:
+      - oauth_client_secret
+      - oauth_cookie_secret
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt: *default-security
+    logging: *default-logging
+
+  coturn:
+    image: ${coturn_image}
+    container_name: netbird-coturn
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    volumes:
+      - ./runtime/turnserver.conf:/etc/turnserver.conf:ro
+    command:
+      - -c
+      - /etc/turnserver.conf
+    read_only: true
+    tmpfs:
+      - /var/tmp:rw,noexec,nosuid,size=16m
+    security_opt: *default-security
+    logging: *default-logging
+
+secrets:
+  oauth_client_secret:
+    file: ./runtime/oauth-client-secret
+  oauth_cookie_secret:
+    file: ./runtime/oauth-cookie-secret
+
+networks:
+  netbird:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

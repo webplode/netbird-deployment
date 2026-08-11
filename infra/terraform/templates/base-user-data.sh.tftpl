@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "$(uname -m)" != "aarch64" ]]; then
+  echo "FATAL: expected aarch64 for t4g.small" >&2
+  exit 1
+fi
+
+hostnamectl set-hostname "${hostname}"
+
+if [[ ! -f /swapfile ]]; then
+  fallocate -l 2G /swapfile
+  chmod 0600 /swapfile
+  mkswap /swapfile
+fi
+
+if ! grep -qF '/swapfile none swap sw 0 0' /etc/fstab; then
+  printf '%s\n' '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+swapon /swapfile 2>/dev/null || true
+printf '%s\n' 'vm.swappiness = 10' > /etc/sysctl.d/90-sleek-swap.conf
+sysctl --system >/dev/null
+
+systemctl enable --now amazon-ssm-agent

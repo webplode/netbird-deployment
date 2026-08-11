@@ -1,0 +1,20 @@
+title = "Sleek NetBird Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Pinned SHA-256 checksums are integrity metadata, not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''^infra/terraform/locals\.tf$''']
+regexes = ['''(?i)^\s*[a-z0-9_]*sha256\s*=\s*"[0-9a-f]{64}"\s*$''']
+
+[[allowlists]]
+description = "Explicit placeholders in the checked-in management secret template"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''^infra/terraform/management-secret\.example\.json$''']
+regexes = ['''"REPLACE_[A-Z0-9_]+"''']

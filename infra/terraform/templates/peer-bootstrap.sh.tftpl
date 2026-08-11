@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+exec 9>/var/lock/sleek-netbird-peer-bootstrap.lock
+if ! flock -n 9; then
+  echo "Another peer bootstrap is already running."
+  exit 0
+fi
+
+if [[ "$(uname -m)" != "aarch64" ]]; then
+  echo "FATAL: expected aarch64 for t4g.small" >&2
+  exit 1
+fi
+
+setup_key_file=""
+profile_tmp=""
+netbird_rpm_tmp=""
+netbird_key_tmp=""
+trap 'rm -f "$setup_key_file" "$profile_tmp" "$netbird_rpm_tmp" "$netbird_key_tmp"' EXIT
+
+hostnamectl set-hostname '${peer_hostname}'
+dnf install -y jq
+systemctl stop netbird.service 2>/dev/null || true
+
+netbird_key_tmp="$(mktemp /run/netbird-signing-key.XXXXXX)"
+curl --fail --silent --show-error --location \
+  'https://pkgs.netbird.io/yum/repodata/repomd.xml.key' \
+  --output "$netbird_key_tmp"
+printf '%s  %s\n' '${netbird_rpm_signing_key_sha256}' "$netbird_key_tmp" | \
+  sha256sum --check --status
+rpm --import "$netbird_key_tmp"
+
+netbird_rpm_tmp="$(mktemp /run/netbird-${netbird_client_version}.XXXXXX.rpm)"
+curl --fail --silent --show-error --location \
+  'https://github.com/netbirdio/netbird/releases/download/v${netbird_client_version}/netbird_${netbird_client_version}_linux_arm64.rpm' \
+  --output "$netbird_rpm_tmp"
+printf '%s  %s\n' '${netbird_client_arm64_rpm_sha256}' "$netbird_rpm_tmp" | \
+  sha256sum --check --status
+rpmkeys --checksig "$netbird_rpm_tmp"
+
+# NetBird's RPM post-install script starts the daemon immediately. Skip package
+# scripts so no process can contact a management service before the self-hosted
+# profile below is complete; install the systemd service explicitly afterward.
+dnf install -y --setopt=tsflags=noscripts "$netbird_rpm_tmp"
+rm -f "$netbird_rpm_tmp" "$netbird_key_tmp"
+netbird_rpm_tmp=""
+netbird_key_tmp=""
+
+installed_version="$(rpm -q --qf '%%{VERSION}-%%{RELEASE}' netbird)"
+if [[ "$installed_version" != '${netbird_client_version}-1' ]]; then
+  echo "FATAL: expected NetBird ${netbird_client_version}-1, found $installed_version" >&2
+  exit 1
+fi
+
+cat > /etc/sysctl.d/99-netbird-routing.conf <<'SYSCTL'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+SYSCTL
+sysctl --system >/dev/null
+
+install -d -o root -g root -m 0700 /var/lib/netbird
+profile_tmp="$(mktemp /run/netbird-profile.XXXXXX)"
+if [[ -s /var/lib/netbird/default.json ]]; then
+  jq -e --arg domain '${domain}' '
+    if type != "object" then error("NetBird profile is not a JSON object") else . end |
+    . + {
+      ManagementURL: ("https://" + $domain + ":443"),
+      AdminURL: ("https://" + $domain + ":443"),
+      WgIface: "wt0",
+      IFaceBlackList: ["docker", "br-", "veth"],
+      BlockInbound: false,
+      BlockLANAccess: false
+    } |
+    .RosenpassEnabled = (.RosenpassEnabled // false)
+  ' /var/lib/netbird/default.json > "$profile_tmp"
+else
+  jq -n --arg domain '${domain}' '{
+    ManagementURL: ("https://" + $domain + ":443"),
+    AdminURL: ("https://" + $domain + ":443"),
+    WgIface: "wt0",
+    IFaceBlackList: ["docker", "br-", "veth"],
+    BlockInbound: false,
+    BlockLANAccess: false,
+    RosenpassEnabled: false,
+    PrivateKey: "",
+    PreSharedKey: ""
+  }' > "$profile_tmp"
+fi
+install -o root -g root -m 0600 "$profile_tmp" /var/lib/netbird/default.json
+rm -f "$profile_tmp"
+profile_tmp=""
+
+if ! systemctl cat netbird.service >/dev/null 2>&1; then
+  /usr/bin/netbird service install
+else
+  systemctl daemon-reload
+fi
+systemctl enable --now netbird.service
+if netbird status --check startup >/dev/null 2>&1; then
+  echo "Routing peer is already registered and healthy."
+  exit 0
+fi
+
+setup_key_value="$(aws secretsmanager get-secret-value \
+  --secret-id '${runtime_secret_arn}' \
+  --query SecretString \
+  --output text)"
+
+if [[ ! "$setup_key_value" =~ ^[A-Za-z0-9-]{16,512}$ ]]; then
+  echo "FATAL: peer secret is not a plausible raw NetBird setup key" >&2
+  unset setup_key_value
+  exit 1
+fi
+
+setup_key_file="$(mktemp /run/netbird-setup-key.XXXXXX)"
+printf '%s' "$setup_key_value" > "$setup_key_file"
+chmod 0600 "$setup_key_file"
+unset setup_key_value
+
+netbird up \
+  --management-url 'https://${domain}:443' \
+  --setup-key-file "$setup_key_file"
+rm -f "$setup_key_file"
+setup_key_file=""
+
+for _ in $(seq 1 60); do
+  if netbird status --check startup >/dev/null 2>&1; then
+    echo "Routing peer registered and passed the NetBird startup check."
+    exit 0
+  fi
+  sleep 5
+done
+
+netbird status || true
+echo "FATAL: routing peer did not pass the startup check" >&2
+exit 1

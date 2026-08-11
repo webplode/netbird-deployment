@@ -1,0 +1,60 @@
+aws_region  = "ap-southeast-1"
+name_prefix = "sleek-netbird"
+environment = "production"
+
+# Existing network observed on 2026-08-11. Reconfirm before use.
+vpc_id = "vpc-06a3f121e9da3e54c"
+subnet_ids = {
+  management = "subnet-06c647986aec0b43d" # ap-southeast-1a
+  peer_1     = "subnet-06c647986aec0b43d" # ap-southeast-1a
+  peer_2     = "subnet-0b5848a676b0eb5d7" # ap-southeast-1b
+}
+
+# Allocation IDs, not public IPv4 literals. Terraform only reads them while all
+# cutover booleans remain false.
+eip_allocation_ids = {
+  management = "eipalloc-REPLACE_ME"
+  peer_1     = "eipalloc-REPLACE_ME"
+  peer_2     = "eipalloc-REPLACE_ME"
+}
+
+# First apply: leave every bootstrap and cutover gate false.
+bootstrap_enabled = {
+  management = false
+  peer_1     = false
+  peer_2     = false
+}
+
+eip_association_enabled = {
+  management = false
+  peer_1     = false
+  peer_2     = false
+}
+
+# Fill from output observed_eip_holders immediately before a cutover.
+eip_rollback_instance_ids = {
+  management = null
+  peer_1     = null
+  peer_2     = null
+}
+
+# Set only during a reviewed EIP move, then return it to an empty string.
+eip_cutover_confirmation = ""
+
+# Session Manager is the default. To retain break-glass SSH, provide both an
+# existing key name and narrow administrator CIDRs.
+key_name         = null
+admin_ipv4_cidrs = []
+
+domain               = "nbvpn.sleek.com"
+acme_email           = "anh.bui@sleek.com"
+oidc_issuer_url      = "https://oauth.id.jumpcloud.com/"
+oauth2_allowed_group = "NetBird Staging Admin"
+
+# Optional alarm delivery.
+alarm_action_arns = []
+
+tags = {
+  Owner      = "security"
+  Repository = "sleek-netbird-deployment"
+}
