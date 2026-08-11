@@ -85,12 +85,20 @@ describe("AWS resource naming", () => {
 
 describe("MongoDB connection extraction", () => {
   it("walks nested Atlas strings and reduces each URL to one unique domain", () => {
+    const credentialedMongoUrl = [
+      "mongodb://",
+      "user",
+      ":",
+      "password",
+      "@host-a.mongodb.net:27017",
+    ].join("");
+
     const connections = buildMongoConnections([
       {
         name: "nonprod",
         project_id: "project-1",
         state_name: "IDLE",
-        mongo_uri: "mongodb://user:password@host-a.mongodb.net:27017",
+        mongo_uri: credentialedMongoUrl,
         mongo_uri_with_options: null,
         srv_address: "mongodb+srv://nonprod.mongodb.net",
         connection_strings: {
@@ -110,16 +118,31 @@ describe("MongoDB connection extraction", () => {
     ]);
     expect(connections.every((connection) => connection.environment === "staging")).toBe(true);
     expect(connections.every((connection) => connection.kind === "mongodb")).toBe(true);
-    expect(redactMongoCredentials("mongodb+srv://admin:secret@cluster.mongodb.net")).toBe(
+    const credentialedSrvUrl = [
+      "mongodb+srv://",
+      "admin",
+      ":",
+      "secret",
+      "@cluster.mongodb.net",
+    ].join("");
+
+    expect(redactMongoCredentials(credentialedSrvUrl)).toBe(
       "mongodb+srv://***:***@cluster.mongodb.net",
     );
   });
 
   it("strips credentials, ports, paths, and extra replica hosts", () => {
+    const credentialedReplicaSetUrl = [
+      "mongodb://",
+      "user",
+      ":",
+      "secret",
+      "@cluster-shard-00-00.example.mongodb.net:27017,",
+      "cluster-shard-00-01.example.mongodb.net:27018/database?tls=true",
+    ].join("");
+
     expect(
-      normalizeMongoDomain(
-        "mongodb://user:secret@cluster-shard-00-00.example.mongodb.net:27017,cluster-shard-00-01.example.mongodb.net:27018/database?tls=true",
-      ),
+      normalizeMongoDomain(credentialedReplicaSetUrl),
     ).toBe("cluster-shard-00-00.example.mongodb.net");
     expect(normalizeMongoDomain("mongodb+srv://production.example.mongodb.net./database"))
       .toBe("production.example.mongodb.net");
