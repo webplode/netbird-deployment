@@ -13,6 +13,8 @@ client tooling, and infrastructure-to-NetBird control plane.
 | [`client/`](client/) | macOS and Windows install, management-URL migration, uninstall, and tests |
 | [`contracts/netbird/openapi.yml`](contracts/netbird/openapi.yml) | NetBird management API contract used by the control plane |
 | [`plans/`](plans/) | Approved implementation and outstanding rollout plans |
+| [`docs/`](docs/) | Research briefs and operating runbooks |
+| [`tools/`](tools/) | Standalone analysis scripts used by the runbooks |
 
 ## Self-hosted deployment
 
@@ -70,6 +72,15 @@ configuration, mutation safeguards, and verification commands. Keep
 See [`client/README.md`](client/README.md). The scripts target
 `https://nbvpn.sleek.com` and deliberately separate installation, endpoint
 migration, and uninstall operations.
+
+## Routing SaaS applications through NetBird
+
+To determine which domains a SaaS application needs before adding NetBird
+domain-based routes, follow
+[`docs/saas-egress-domain-discovery.md`](docs/saas-egress-domain-discovery.md).
+It covers HAR capture, extraction with
+[`tools/har-domain-extract.py`](tools/har-domain-extract.py), the NetBird
+wildcard rules, and the recorded domain sets for Claude and ChatGPT.
 
 ## Active operational plan
 

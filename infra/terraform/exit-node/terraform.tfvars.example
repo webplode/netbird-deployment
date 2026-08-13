@@ -1,0 +1,29 @@
+# Values discovered from the running nb-prod-exitnode-01 (i-071741f3f69aabd73)
+# in the devops account (560723684645), ap-southeast-1.
+
+# Composes the hostname and resource names: nb-prod-exitnode-only-01
+aws_region  = "ap-southeast-1"
+name_prefix = "nb"
+environment = "prod"
+node_name   = "exitnode-only-01"
+
+vpc_id    = "vpc-06a3f121e9da3e54c"
+subnet_id = "subnet-06c647986aec0b43d" # public, ap-southeast-1a, 10.241.0.0/26
+
+domain = "nbvpn.sleek.com"
+
+instance_type        = "t4g.micro"
+root_volume_size_gib = 16
+
+# al2023-ami-2023.12.20260803.3-kernel-6.12-arm64, resolved 2026-08-13. Remove
+# to track the public SSM parameter instead (needs ssm:GetParameter).
+ami_id = "ami-0c7aee202a3a5b09a"
+
+# Keep a stable public egress address across stop/start. The existing exit
+# node's EIP (eipalloc-03cb123d9dd951339 / 18.143.19.220) stays attached to the
+# old instance; this allocates a new one.
+create_eip = true
+
+# SSH stays closed; Session Manager is the admin path.
+# key_name         = null
+# admin_ipv4_cidrs = []

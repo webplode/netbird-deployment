@@ -46,6 +46,10 @@ secrets.yml
 # Historical captures, backups, editor state, and generated artifacts.
 *.bak
 *.har
+
+# Local HAR captures and the reports generated from them. Extracted URLs carry
+# signed download links, session identifiers, and bearer-token query strings.
+har-files/
 *.swp
 .DS_Store
 .omx/
@@ -69,3 +73,8 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 infra/terraform/management-secret.json
+
+# Exit-node stack keeps local state (contains the peer setup key) — never push.
+infra/terraform/exit-node/terraform.tfstate
+infra/terraform/exit-node/terraform.tfstate.backup
+infra/terraform/exit-node/terraform.tfvars

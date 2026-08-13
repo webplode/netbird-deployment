@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+# Install the bootstrap as a systemd oneshot instead of running it inline so a
+# reboot retries enrollment idempotently (cloud-init user data runs once).
+cat > /usr/local/sbin/netbird-exit-node-bootstrap <<'BOOTSTRAP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+exec 9>/var/lock/netbird-exit-node-bootstrap.lock
+if ! flock -n 9; then
+  echo "Another exit-node bootstrap is already running."
+  exit 0
+fi
+
+if [[ "$(uname -m)" != "aarch64" ]]; then
+  echo "FATAL: expected aarch64 on a t4g instance" >&2
+  exit 1
+fi
+
+export AWS_DEFAULT_REGION='${aws_region}'
+
+setup_key_file=""
+profile_tmp=""
+netbird_rpm_tmp=""
+netbird_key_tmp=""
+trap 'rm -f "$setup_key_file" "$profile_tmp" "$netbird_rpm_tmp" "$netbird_key_tmp"' EXIT
+
+hostnamectl set-hostname '${hostname}'
+
+if [[ ! -f /swapfile ]]; then
+  fallocate -l 2G /swapfile
+  chmod 0600 /swapfile
+  mkswap /swapfile
+fi
+if ! grep -qF '/swapfile none swap sw 0 0' /etc/fstab; then
+  printf '%s\n' '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+swapon /swapfile 2>/dev/null || true
+printf '%s\n' 'vm.swappiness = 10' > /etc/sysctl.d/90-sleek-swap.conf
+
+cat > /etc/sysctl.d/99-netbird-routing.conf <<'SYSCTL'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+SYSCTL
+sysctl --system >/dev/null
+
+dnf install -y jq
+systemctl stop netbird.service 2>/dev/null || true
+
+netbird_key_tmp="$(mktemp /run/netbird-signing-key.XXXXXX)"
+curl --fail --silent --show-error --location \
+  'https://pkgs.netbird.io/yum/repodata/repomd.xml.key' \
+  --output "$netbird_key_tmp"
+printf '%s  %s\n' '${netbird_rpm_signing_key_sha256}' "$netbird_key_tmp" | \
+  sha256sum --check --status
+rpm --import "$netbird_key_tmp"
+
+netbird_rpm_tmp="$(mktemp /run/netbird-${netbird_client_version}.XXXXXX.rpm)"
+curl --fail --silent --show-error --location \
+  'https://github.com/netbirdio/netbird/releases/download/v${netbird_client_version}/netbird_${netbird_client_version}_linux_arm64.rpm' \
+  --output "$netbird_rpm_tmp"
+printf '%s  %s\n' '${netbird_client_arm64_rpm_sha256}' "$netbird_rpm_tmp" | \
+  sha256sum --check --status
+rpmkeys --checksig "$netbird_rpm_tmp"
+
+# NetBird's RPM post-install script starts the daemon immediately. Skip package
+# scripts so no process can contact a management service before the self-hosted
+# profile below is complete; install the systemd service explicitly afterward.
+dnf install -y --setopt=tsflags=noscripts "$netbird_rpm_tmp"
+rm -f "$netbird_rpm_tmp" "$netbird_key_tmp"
+netbird_rpm_tmp=""
+netbird_key_tmp=""
+
+installed_version="$(rpm -q --qf '%%{VERSION}-%%{RELEASE}' netbird)"
+if [[ "$installed_version" != '${netbird_client_version}-1' ]]; then
+  echo "FATAL: expected NetBird ${netbird_client_version}-1, found $installed_version" >&2
+  exit 1
+fi
+
+install -d -o root -g root -m 0700 /var/lib/netbird
+profile_tmp="$(mktemp /run/netbird-profile.XXXXXX)"
+# NetBird persists ManagementURL/AdminURL as Go url.URL objects, not strings;
+# a string value makes the daemon fail to unmarshal its config and crash-loop.
+if [[ -s /var/lib/netbird/default.json ]]; then
+  jq -e --arg domain '${domain}' '
+    if type != "object" then error("NetBird profile is not a JSON object") else . end |
+    . + {
+      ManagementURL: { Scheme: "https", Host: ($domain + ":443") },
+      AdminURL: { Scheme: "https", Host: ($domain + ":443") },
+      WgIface: "wt0",
+      WgPort: 51820,
+      IFaceBlackList: ["docker", "br-", "veth"],
+      BlockInbound: false,
+      BlockLANAccess: false
+    } |
+    .RosenpassEnabled = (.RosenpassEnabled // false)
+  ' /var/lib/netbird/default.json > "$profile_tmp"
+else
+  jq -n --arg domain '${domain}' '{
+    ManagementURL: { Scheme: "https", Host: ($domain + ":443") },
+    AdminURL: { Scheme: "https", Host: ($domain + ":443") },
+    WgIface: "wt0",
+    WgPort: 51820,
+    IFaceBlackList: ["docker", "br-", "veth"],
+    BlockInbound: false,
+    BlockLANAccess: false,
+    RosenpassEnabled: false,
+    PrivateKey: "",
+    PreSharedKey: ""
+  }' > "$profile_tmp"
+fi
+install -o root -g root -m 0600 "$profile_tmp" /var/lib/netbird/default.json
+rm -f "$profile_tmp"
+profile_tmp=""
+
+if ! systemctl cat netbird.service >/dev/null 2>&1; then
+  /usr/bin/netbird service install
+else
+  systemctl daemon-reload
+fi
+systemctl enable --now netbird.service
+if netbird status --check startup >/dev/null 2>&1; then
+  echo "Exit node is already registered and healthy."
+  exit 0
+fi
+
+# The secret container may not have a value yet when Terraform finishes; keep
+# retrying so operators can populate it after apply without re-running anything.
+setup_key_value=""
+for _ in $(seq 1 60); do
+  if setup_key_value="$(aws secretsmanager get-secret-value \
+    --secret-id '${setup_key_secret_arn}' \
+    --query SecretString \
+    --output text 2>/dev/null)"; then
+    break
+  fi
+  echo "Setup-key secret has no readable value yet; retrying in 30s."
+  sleep 30
+done
+
+if [[ ! "$setup_key_value" =~ ^[A-Za-z0-9-]{16,512}$ ]]; then
+  echo "FATAL: secret value is not a plausible raw NetBird setup key" >&2
+  unset setup_key_value
+  exit 1
+fi
+
+setup_key_file="$(mktemp /run/netbird-setup-key.XXXXXX)"
+printf '%s' "$setup_key_value" > "$setup_key_file"
+chmod 0600 "$setup_key_file"
+unset setup_key_value
+
+netbird up \
+  --management-url 'https://${domain}:443' \
+  --setup-key-file "$setup_key_file"
+rm -f "$setup_key_file"
+setup_key_file=""
+
+for _ in $(seq 1 60); do
+  if netbird status --check startup >/dev/null 2>&1; then
+    echo "Exit node registered and passed the NetBird startup check."
+    exit 0
+  fi
+  sleep 5
+done
+
+netbird status || true
+echo "FATAL: exit node did not pass the startup check" >&2
+exit 1
+BOOTSTRAP
+chmod 0700 /usr/local/sbin/netbird-exit-node-bootstrap
+
+cat > /etc/systemd/system/netbird-exit-node-bootstrap.service <<'UNIT'
+[Unit]
+Description=Enroll this host as a NetBird exit node
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/netbird-exit-node-bootstrap
+TimeoutStartSec=45min
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now amazon-ssm-agent
+systemctl enable netbird-exit-node-bootstrap.service
+systemctl start --no-block netbird-exit-node-bootstrap.service
