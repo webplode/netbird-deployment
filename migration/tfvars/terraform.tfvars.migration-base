@@ -1,0 +1,72 @@
+# Migration baseline for infra/terraform/terraform.tfvars.
+# Copied into place by migration/scripts/01-apply-parallel-stack.sh.
+# Every bootstrap and cutover gate starts false; the phase scripts flip them
+# one at a time via set-tfvar.py and each flip is reviewed in a plan readback.
+#
+# All IDs below were verified read-only on 2026-08-13 against account
+# 560723684645 (ap-southeast-1). Re-verified automatically by 00-preflight.sh.
+
+aws_region  = "ap-southeast-1"
+name_prefix = "sleek-netbird"
+environment = "production"
+
+vpc_id = "vpc-06a3f121e9da3e54c"
+subnet_ids = {
+  management = "subnet-06c647986aec0b43d" # ap-southeast-1a (same AZ as old mgmt + data volume)
+  peer_1     = "subnet-06c647986aec0b43d" # ap-southeast-1a
+  peer_2     = "subnet-0b5848a676b0eb5d7" # ap-southeast-1b
+}
+
+# Live production EIPs. Supplying the IDs never moves them; movement requires
+# eip_association_enabled + the confirmation phrase, one node at a time.
+eip_allocation_ids = {
+  management = "eipalloc-0cdfcdf07221f2f96" # 18.136.135.128, today on i-0ebece0782d6bd148 (old mgmt)
+  peer_1     = "eipalloc-03cb123d9dd951339" # 18.143.19.220,  today on i-071741f3f69aabd73 (nb-prod-exitnode-01)
+  peer_2     = "eipalloc-02f15b26c1f2b84ea" # 47.130.71.73,   today on i-006ffee7739f25a05 (nb-prod-exitnode-02)
+}
+
+bootstrap_enabled = {
+  management = false
+  peer_1     = false
+  peer_2     = false
+}
+
+eip_association_enabled = {
+  management = false
+  peer_1     = false
+  peer_2     = false
+}
+
+# Filled by the cutover scripts immediately before each EIP move.
+eip_rollback_instance_ids = {
+  management = null
+  peer_1     = null
+  peer_2     = null
+}
+
+# Set only by 05/06 during a reviewed EIP move, then cleared back to "".
+eip_cutover_confirmation = ""
+
+# Session Manager only; no SSH ingress on the new nodes.
+key_name         = null
+admin_ipv4_cidrs = []
+
+domain          = "nbvpn.sleek.com"
+acme_email      = "anh.bui@sleek.com"
+oidc_issuer_url = "https://oauth.id.jumpcloud.com/"
+# Live value verified over SSH on 2026-08-13; the tfvars.example value
+# "NetBird Staging Admin" was stale and would have locked admins out.
+oauth2_allowed_group = "NetBird Administrator"
+
+# AL2023 ARM64 resolved 2026-08-13; same image already validated on
+# nb-prod-exitnode-only-01. Remove to track the public SSM parameter.
+ami_id = "ami-0c7aee202a3a5b09a"
+
+# TODO before Phase A completes: point at an SNS topic for CloudWatch alarms.
+alarm_action_arns = []
+
+tags = {
+  Owner      = "security"
+  Repository = "sleek-netbird-deployment"
+  Migration  = "netbird-x86-to-arm64-2026-08"
+}

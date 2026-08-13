@@ -1,0 +1,6 @@
+# Live material fetched from production hosts and generated secrets/artifacts.
+# Nothing under these paths may enter the repository.
+.fetched/
+*.local.json
+*.tar.gz
+*.sha256

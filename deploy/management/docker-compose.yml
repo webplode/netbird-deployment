@@ -89,7 +89,7 @@ services:
         max-file: "2"
 
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
     container_name: netbird-oauth2-proxy
     restart: unless-stopped
     networks: [netbird]
@@ -104,7 +104,7 @@ services:
       OAUTH2_PROXY_WHITELIST_DOMAINS: nbvpn.sleek.com
       OAUTH2_PROXY_REDIRECT_URL: https://nbvpn.sleek.com/oauth2-proxy/callback
       OAUTH2_PROXY_EMAIL_DOMAINS: "*"
-      OAUTH2_PROXY_ALLOWED_GROUPS: "NetBird Staging Admin"
+      OAUTH2_PROXY_ALLOWED_GROUPS: "NetBird Administrator"
       OAUTH2_PROXY_OIDC_GROUPS_CLAIM: "groups"
       OAUTH2_PROXY_UPSTREAMS: http://dashboard:80
       OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180

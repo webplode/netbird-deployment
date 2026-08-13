@@ -61,13 +61,16 @@ sysctl --system >/dev/null
 
 install -d -o root -g root -m 0700 /var/lib/netbird
 profile_tmp="$(mktemp /run/netbird-profile.XXXXXX)"
+# NetBird persists ManagementURL/AdminURL as Go url.URL objects, not strings;
+# a string value makes the daemon fail to unmarshal its config and crash-loop.
 if [[ -s /var/lib/netbird/default.json ]]; then
   jq -e --arg domain '${domain}' '
     if type != "object" then error("NetBird profile is not a JSON object") else . end |
     . + {
-      ManagementURL: ("https://" + $domain + ":443"),
-      AdminURL: ("https://" + $domain + ":443"),
+      ManagementURL: { Scheme: "https", Host: ($domain + ":443") },
+      AdminURL: { Scheme: "https", Host: ($domain + ":443") },
       WgIface: "wt0",
+      WgPort: 51820,
       IFaceBlackList: ["docker", "br-", "veth"],
       BlockInbound: false,
       BlockLANAccess: false
@@ -76,9 +79,10 @@ if [[ -s /var/lib/netbird/default.json ]]; then
   ' /var/lib/netbird/default.json > "$profile_tmp"
 else
   jq -n --arg domain '${domain}' '{
-    ManagementURL: ("https://" + $domain + ":443"),
-    AdminURL: ("https://" + $domain + ":443"),
+    ManagementURL: { Scheme: "https", Host: ($domain + ":443") },
+    AdminURL: { Scheme: "https", Host: ($domain + ":443") },
     WgIface: "wt0",
+    WgPort: 51820,
     IFaceBlackList: ["docker", "br-", "veth"],
     BlockInbound: false,
     BlockLANAccess: false,

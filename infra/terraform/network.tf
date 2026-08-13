@@ -76,6 +76,15 @@ resource "aws_vpc_security_group_ingress_rule" "management_ssh" {
   }
 }
 
+resource "aws_vpc_security_group_ingress_rule" "peers_wireguard" {
+  security_group_id = aws_security_group.peers.id
+  description       = "WireGuard direct P2P; parity with the current exit nodes so clients connect directly instead of relaying"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 51820
+  to_port           = 51820
+  ip_protocol       = "udp"
+}
+
 resource "aws_vpc_security_group_ingress_rule" "peers_ssh" {
   for_each = var.admin_ipv4_cidrs
 
