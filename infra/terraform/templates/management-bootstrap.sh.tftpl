@@ -156,14 +156,16 @@ chmod 0600 /opt/sleek-netbird/runtime/relay.env
 cat > /opt/sleek-netbird/runtime/dashboard.env <<'DASHBOARD_ENV'
 NETBIRD_MGMT_API_ENDPOINT=https://${domain}
 NETBIRD_MGMT_GRPC_API_ENDPOINT=https://${domain}
-AUTH_AUDIENCE=netbird-client
-AUTH_CLIENT_ID=netbird-client
+# The embedded IdP (idp.db, migrated from the previous deployment) registers
+# the dashboard as client "netbird-dashboard"; "netbird-client" is rejected.
+AUTH_AUDIENCE=netbird-dashboard
+AUTH_CLIENT_ID=netbird-dashboard
+AUTH_CLIENT_SECRET=
 AUTH_AUTHORITY=https://${domain}/oauth2
 USE_AUTH0=false
-AUTH_SUPPORTED_SCOPES=openid profile email offline_access
+AUTH_SUPPORTED_SCOPES=openid profile email groups
 AUTH_REDIRECT_URI=/nb-auth
 AUTH_SILENT_REDIRECT_URI=/nb-silent-auth
-NETBIRD_TOKEN_SOURCE=accessToken
 DASHBOARD_ENV
 chmod 0640 /opt/sleek-netbird/runtime/dashboard.env
 
