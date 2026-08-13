@@ -94,7 +94,9 @@ jq -e '
 ' "$secret_file" >/dev/null
 
 jq -j -r '.oauth2_client_secret' "$secret_file" > /opt/sleek-netbird/runtime/oauth-client-secret
-chmod 0600 /opt/sleek-netbird/runtime/oauth-client-secret
+# oauth2-proxy runs as uid 65532 and compose file-secrets keep host ownership.
+chown 65532:65532 /opt/sleek-netbird/runtime/oauth-client-secret
+chmod 0400 /opt/sleek-netbird/runtime/oauth-client-secret
 
 cookie_b64_file="$(mktemp /run/sleek-netbird-cookie.XXXXXX)"
 jq -j -r '.oauth2_cookie_secret_base64' "$secret_file" | tr '_-' '/+' > "$cookie_b64_file"
@@ -111,7 +113,8 @@ case "$cookie_bytes" in
   16|24|32) ;;
   *) echo "FATAL: OAuth2 cookie secret must decode to 16, 24, or 32 bytes" >&2; exit 1 ;;
 esac
-chmod 0600 /opt/sleek-netbird/runtime/oauth-cookie-secret
+chown 65532:65532 /opt/sleek-netbird/runtime/oauth-cookie-secret
+chmod 0400 /opt/sleek-netbird/runtime/oauth-cookie-secret
 
 health_token="$(jq -j -r '.health_token' "$secret_file")"
 oauth2_client_id="$(jq -j -r '.oauth2_client_id' "$secret_file")"

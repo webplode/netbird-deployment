@@ -78,14 +78,18 @@ log() { printf '\n==> %s\n' "$*"; }
 #   ssm_run <instance-id> <timeout-seconds> <<'EOF' ... script ... EOF
 # ---------------------------------------------------------------------------
 ssm_run() {
-  local instance_id="$1" timeout="$2" script command_id status
+  local instance_id="$1" timeout="$2" script command_id status b64
   script="$(cat)"
+  # AWS-RunShellScript executes with /bin/sh (dash on Ubuntu); route the script
+  # into a real bash and dodge all sh-level quoting via base64.
+  b64="$(printf '%s' "$script" | base64 | tr -d '\n')"
   command_id="$(awsw ssm send-command \
     --instance-ids "$instance_id" \
     --document-name AWS-RunShellScript \
     --comment "sleek-netbird-migration" \
     --timeout-seconds "$timeout" \
-    --parameters "$(jq -n --arg s "$script" '{commands: [$s], executionTimeout: ["'"$timeout"'"]}')" \
+    --parameters "$(jq -n --arg b "$b64" --arg t "$timeout" \
+      '{commands: [("printf %s " + $b + " | base64 -d | /bin/bash")], executionTimeout: [$t]}')" \
     --query 'Command.CommandId' --output text)"
   while :; do
     status="$(awsw ssm get-command-invocation --command-id "$command_id" --instance-id "$instance_id" \
@@ -132,7 +136,11 @@ run_on_old_mgmt() {
 # ---------------------------------------------------------------------------
 # Terraform helpers.
 # ---------------------------------------------------------------------------
-tf() { terraform -chdir="$TF_DIR" "$@"; }
+tf() {
+  AWS_PROFILE="${MIGRATION_AWS_PROFILE:?Set MIGRATION_AWS_PROFILE to the admin SSO profile}" \
+  AWS_REGION="$MIG_REGION" \
+  terraform -chdir="$TF_DIR" "$@"
+}
 
 tf_output_json() { tf output -json "$1"; }
 
@@ -148,7 +156,7 @@ new_temp_ip() {
 # plan_readback <plan-file> <jq-filter> <expected> <label>
 plan_readback() {
   local plan_file="$1" filter="$2" expected="$3" label="$4" actual
-  actual="$(tf show -json "$plan_file" | jq "$filter")"
+  actual="$(tf show -json "$plan_file" | jq -c "$filter")"
   if [[ "$actual" != "$expected" ]]; then
     echo "FATAL plan readback: $label — expected $expected, plan has $actual" >&2
     return 1

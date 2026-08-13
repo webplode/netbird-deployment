@@ -71,9 +71,11 @@ tar -C "\$volume_path" -czf "\$work/mgmt-data.tar.gz" .
 tar -C "\$compose_dir/caddy_data" -czf "\$work/caddy-data.tar.gz" .
 ( cd "\$work" && sha256sum mgmt-data.tar.gz caddy-data.tar.gz > manifest.txt )
 cat "\$work/manifest.txt"
-curl -fsS -T "\$work/mgmt-data.tar.gz"  '${put_data_url}'
-curl -fsS -T "\$work/caddy-data.tar.gz" '${put_caddy_url}'
-curl -fsS -T "\$work/manifest.txt"      '${put_manifest_url}'
+for pair in "mgmt-data.tar.gz|${put_data_url}" "caddy-data.tar.gz|${put_caddy_url}" "manifest.txt|${put_manifest_url}"; do
+  f="\${pair%%|*}"; u="\${pair#*|}"
+  code="\$(curl -sS -T "\$work/\$f" -o /dev/null -w '%{http_code}' "\$u")"
+  [[ "\$code" == "200" ]] || { echo "FATAL: PUT \$f returned HTTP \$code"; exit 1; }
+done
 echo UPLOAD_OK
 EOF
 

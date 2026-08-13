@@ -72,6 +72,14 @@ EOT
 snapshot_old_mgmt() {
   log "Snapshotting old management root volume $OLD_MGMT_ROOT_VOL (pre-migration backup)"
   local snap_id
+  if [[ -f "${FETCH_DIR}/mgmt-root-snapshot-id.txt" ]]; then
+    snap_id="$(cat "${FETCH_DIR}/mgmt-root-snapshot-id.txt")"
+    if [[ "$(awsw ec2 describe-snapshots --snapshot-ids "$snap_id" \
+          --query 'Snapshots[0].State' --output text 2>/dev/null)" == "completed" ]]; then
+      echo "Snapshot already completed: $snap_id (skipping)"
+      return 0
+    fi
+  fi
   snap_id="$(awsw ec2 create-snapshot --volume-id "$OLD_MGMT_ROOT_VOL" \
     --description "pre-migration backup of NetBird MGMT root ($OLD_MGMT_ID) $(date -u +%Y-%m-%dT%H:%MZ)" \
     --tag-specifications 'ResourceType=snapshot,Tags=[{Key=Name,Value=netbird-mgmt-pre-migration},{Key=Migration,Value=netbird-x86-to-arm64-2026-08}]' \

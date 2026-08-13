@@ -27,7 +27,13 @@ def main() -> None:
     args = parser.parse_args()
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
-    client = session.client("s3", config=Config(signature_version="s3v4"))
+    # Pin the regional endpoint: fresh buckets answer TemporaryRedirect on the
+    # global endpoint, and curl treats that 307 as success.
+    client = session.client(
+        "s3",
+        endpoint_url=f"https://s3.{args.region}.amazonaws.com",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+    )
     operation = "put_object" if args.method == "put" else "get_object"
     url = client.generate_presigned_url(
         operation,
