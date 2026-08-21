@@ -48,11 +48,11 @@ locals {
 
   images = {
     caddy       = "caddy:2.11.4@sha256:844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9"
-    dashboard   = "netbirdio/dashboard:v2.90.9@sha256:d559f76456df2f06f57108d5271059e085f6d8b510ccdce3c3eac4df15c65121"
-    management  = "netbirdio/management:0.76.1@sha256:34cd6872ffaf8430a3e91df7a8a21dc94d1ef89e9df2ab913a509f68ab85b091"
+    dashboard   = "netbirdio/dashboard:v2.91.0@sha256:aae926912ca43704e66b8146164eb2d285e36adb816a3beb95224ee80253ecfb"
+    management  = "netbirdio/management:0.77.0@sha256:bf82dc78e9ede3e5b963da1a905a84ca1e07d0b8647b8238540572c81badfe03"
     oauth_proxy = "quay.io/oauth2-proxy/oauth2-proxy:v7.15.3@sha256:10a1165743a192e1940b4708fb9647027185ce11a681a1c5519b442ff7f1f561"
-    relay       = "netbirdio/relay:0.76.1@sha256:b08d54bb6bc74bf34cc5c14238923be259422152fb8bad5ff99e6eea264028d6"
-    signal      = "netbirdio/signal:0.76.1@sha256:059fe994b561229de9393346111c377bf210137eb5959b47cd6c8463f2694757"
+    relay       = "netbirdio/relay:0.77.0@sha256:cbd7177363af2cdd27187504c41fced76e2529d1fb7d0343820b6253d89a28b4"
+    signal      = "netbirdio/signal:0.77.0@sha256:13d1d4b32374210f5f8eb19848c563fc9ffc7fea87fcfb76da0c5b21c2c45d47"
     coturn      = "coturn/coturn:4.7.0@sha256:a00afb5b4890de4df22bbe70379c6b316685dffee297d53cac1271dcb91fab93"
   }
 
